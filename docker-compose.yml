@@ -1,0 +1,55 @@
+# Calculator stack: Nginx reverse proxy -> N calculator API replicas.
+#
+#   docker compose up -d            # build-free: pulls the image from Docker Hub
+#   curl "localhost:8085/api/v1/add?a=2&b=3"
+#
+# Variables (set by Jenkins, or in a local .env file):
+#   DOCKERHUB_USER   Docker Hub namespace of the image
+#   IMAGE_TAG        image tag to deploy (Jenkins uses the build number)
+#   PROXY_PORT       host port for the proxy (default 8085)
+
+name: calculator
+
+services:
+  calculator:
+    image: ${DOCKERHUB_USER:-local}/calculator-devops:${IMAGE_TAG:-latest}
+    environment:
+      SERVER_PORT: "8080"
+      SPRING_APPLICATION_NAME: calculator
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=75.0"
+    expose:
+      - "8080"
+    deploy:
+      replicas: ${CALCULATOR_REPLICAS:-2}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - calculator-net
+
+  proxy:
+    image: nginx:1.29-alpine
+    depends_on:
+      calculator:
+        condition: service_healthy
+    ports:
+      - "${PROXY_PORT:-8085}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - calculator-net
+
+networks:
+  calculator-net:
+    driver: bridge
